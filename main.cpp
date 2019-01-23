@@ -4,6 +4,7 @@
 #include "ThreadPool1.h"
 #include <random>
 #include <algorithm>
+#include <zconf.h>
 
 #define K 1024
 #define M 1024 * 1024
@@ -11,53 +12,76 @@
 
 // Mutex for cout
 std::mutex mu;
-static std::atomic_uint gstart(0);
 
-void initializeV(std::vector<int>& vector);
+void initializeV(std::vector<int>* vector, int start);
+
+void sortV(std::vector<int>& vector, int start);
+
+/*
+int hello(int i) {
+    std::lock_guard<std::mutex> lockGuard(mu);
+    std::cout << "From " << i << "th thread " << std::this_thread::get_id() << " : hello ZION! " << std::endl;
+    return i + 100;
+}
+*/
 
 int main() {
-    std::unique_ptr<ThreadPool1> uniquePtr(new ThreadPool1(4));
+    ThreadPool1 tp1(2);
     /*
+    std::vector<std::future<int>> v;
     for(int i = 0; i < 77; i++) {
-        uniquePtr->submit([i] {
-            std::lock_guard<std::mutex> lockGuard(mu);
-            std::cout << "From "<< i <<"th thread " << std::this_thread::get_id() << " : hello Chenhang Jiao! " << std::endl;
-        });
+        std::future<int> myF = tp1.submit(hello, i);
+        v.push_back(std::move(myF));
     }
-     */
+    tp1.waitAll();
+    for(auto& i : v) {
+        std::cout<< i.get() << std::endl;
+    }
+    */
+
+    std::cout << "Initializing Vector......" << std::endl;
     std::vector<int> tobe_sorted(K * SIZE);
+    std::vector<int>* p = &tobe_sorted;
+    //std::vector<int>& ref = tobe_sorted;
     // Initialization of the vector
-    initializeV(tobe_sorted);
+    for(int i = 0; i < K; i = i + K) {
+        tp1.submit(initializeV, p, i);
+    }
+    tp1.waitAll();
+    std::cout << "Initialization finish!" << std::endl;
 
     // Going to sort it;
-    for(int i = 0; i < K; i++) {
-        uniquePtr->submit([&tobe_sorted] {
-            int start = gstart.fetch_add(SIZE);
-            int end = start + SIZE;
-            std::sort(tobe_sorted.begin() + start, tobe_sorted.begin() + end);
-        });
+    std::cout << "Sorting Vector......" << std::endl;
+    for(int i = 0; i < K; i = i + K) {
+        // Can not pass a & into a thread;
+        tp1.submit(sortV, std::ref(tobe_sorted), i);
     }
-    std::cout << "Sort finished" << std::endl;
-    uniquePtr.reset(nullptr);
+    tp1.waitAll();
+    std::cout << "Sort finish!" << std::endl;
 
-    std::cout << "check answer:" << std::endl;
+    std::cout << "Checking answer......" << std::endl;
     for(unsigned int i = 1; i < K * SIZE; i++) {
-        //if(i % SIZE == 0) continue;
+        if(i % SIZE == 0) continue;
         if(tobe_sorted[i] < tobe_sorted[i - 1]) {
-            std::cout << "sort failed at:" << i << std::endl;
+            std::cout << "Sort failed at:" << i << std::endl;
             return 0;
         }
     }
-    std::cout << "sort successfully" << std::endl;
+    std::cout << "Sort successfully" << std::endl;
     return 0;
 }
 
-void initializeV(std::vector<int>& vector) {
+void initializeV(std::vector<int>* vector, int start) {
     std::default_random_engine e;
     std::uniform_int_distribution<int> u;
-    for (int i = 0; i < vector.size(); i++) {
-        vector[i] = u(e);
+    int end = start + SIZE;
+    for (int i = start; i < end; i++) {
+        (*vector)[i] = u(e);
     }
-    std::cout << "Initialization finished" << std::endl;
+}
+
+void sortV(std::vector<int>& vector, int start) {
+    int end = start + SIZE;
+    std::sort(vector.begin() + start, vector.begin() + end);
 }
 
