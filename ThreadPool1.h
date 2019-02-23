@@ -67,7 +67,7 @@ private:
     std::condition_variable condForWaiting;
 
     // atomic number use to count the tasks that are not finished yet
-    std::atomic_size_t tasksNum;
+    std::size_t tasksNum;
 
     // the state of ThreadPool
     bool isShutdown;
@@ -115,7 +115,7 @@ void ThreadPool1::shutDown(std::chrono::milliseconds waitTime) {
         if(worker.joinable()) {
             worker.join();
         } else {
-            // ？？Don't know how to do.
+            //TODO: ？？Don't know what to do here.
             worker.detach();
         }
     }
@@ -131,12 +131,19 @@ void ThreadPool1::initThread() {
             this->tasks.pop();
             uniqueLock.unlock();
             task();
-            tasksNum.fetch_sub(1);
-            this->condForWaiting.notify_one();
+            {
+                std::lock_guard<std::mutex> lockGuard(waitingMutex);
+                tasksNum--;
+                // It is more efficient that putting the cond.notify_one() into the lock_guard scope.
+                // https://stackoverflow.com/questions/4544234/calling-pthread-cond-signal-without-locking-mutex
+                this->condForWaiting.notify_one();
+            }
             uniqueLock.lock();
         } else if(this->isShutdown){
+            // Thread is going to kill itself
             break;
         } else {
+            // Waiting for new task being added into the tasks queue
             this->condForQueue.wait(uniqueLock);
         }
     }
@@ -144,7 +151,10 @@ void ThreadPool1::initThread() {
 
 template<class Function, class... Args>
 std::future<std::invoke_result_t<Function, Args...>> ThreadPool1::submit(Function&& f, Args&&... args) {
-    tasksNum.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lockGuard(waitingMutex);
+        tasksNum++;
+    }
     using return_type = std::invoke_result_t<Function, Args...>;
     // Build a packaged_task
     auto task = std::make_shared<std::packaged_task<return_type()>>(
@@ -163,40 +173,38 @@ std::future<std::invoke_result_t<Function, Args...>> ThreadPool1::submit(Functio
         }
         // Push the task into the task queue
         this->tasks.emplace([task](){ (*task)();});
-    }
 
-    // Notify one thread that is waiting for this condition.
-    this->condForQueue.notify_one();
+        // Notify one thread that is waiting for this condition.
+        this->condForQueue.notify_one();
+    }
     return std::move(res);
 }
 
 
 void ThreadPool1::waitAll() {
-    std::cout<< "Waiting all tasks ot finish" << std::endl;
-
-    if(tasksNum.load() != 0) {
-        std::unique_lock<std::mutex> unique_lock(waitingMutex);
-
+    std::unique_lock<std::mutex> unique_lock(waitingMutex);
+    std::cout<< "Waiting all tasks ot finish"<< std::endl;
+    while(tasksNum != 0) {
+        std::cout << tasksNum << std::endl;
         // Keep waiting until the taskNum == 0, check the tasksNum only when be notified.
-        this->condForWaiting.wait(unique_lock, [this](){return this->tasksNum.load() == 0;});
+        this->condForWaiting.wait(unique_lock);
     }
-
     std::cout<< "All tasks are finished" << std::endl;
 }
+
 
 bool ThreadPool1::waitAllFor(std::chrono::milliseconds sleepDuration) {
     std::cout<< "Waiting all tasks ot finish for " << sleepDuration.count() << "ms" << std::endl;
 
     auto startTime = std::chrono::high_resolution_clock::now();
     auto endTime = startTime + sleepDuration;
-    while(1) {
-        if(tasksNum.load() == 0 || std::chrono::high_resolution_clock::now() >= endTime) {
-            break;
-        }
-    }
 
-    std::cout<< (tasksNum.load() == 0 ? "All tasks are finished" : "Time out!") << std::endl;
-    return tasksNum.load() == 0;
+    std::unique_lock<std::mutex> unique_lock(waitingMutex);
+    while(tasksNum != 0 || std::chrono::high_resolution_clock::now() >= endTime) {
+        this->condForWaiting.wait(unique_lock);
+    }
+    std::cout<< (tasksNum == 0 ? "All tasks are finished" : "Time out!") << std::endl;
+    return tasksNum == 0;
 }
 
 #endif //TP_THREADPOOL1_H

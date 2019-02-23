@@ -8,7 +8,7 @@
 
 #define K 1024
 #define M 1024 * 1024
-#define SIZE 1 * K //size of each part
+#define SIZE 100 * K //size of each part
 
 //std::mutex mu;
 
@@ -20,18 +20,6 @@ void tpQuickSort(std::vector<int>* vector, int start, int end, ThreadPool1* tp);
 
 int main() {
     ThreadPool1 tp1;
-
-    /*
-    std::vector<std::future<int>> v;
-    for(int i = 0; i < 77; i++) {
-        std::future<int> myF = tp1.submit(hello, i);
-        v.push_back(std::move(myF));
-    }
-    tp1.waitAll();
-    for(auto& i : v) {
-        std::cout<< i.get() << std::endl;
-    }
-    */
 
     std::cout << "Initializing Vector......" << std::endl;
     std::vector<int> tobe_sorted(K * SIZE);
@@ -45,16 +33,15 @@ int main() {
 
     // Going to sort it;
     std::cout << "Sorting Vector......" << std::endl;
+    auto start = std::chrono::system_clock::now();
     /*
-    for(int i = 0; i < K; i = i + K) {
+    for(int i = 0; i < K * SIZE; i = i + SIZE) {
         // Can not pass a & into a thread;
         tp1.submit(sortV, std::ref(tobe_sorted), i);
     }
     */
-    auto start = std::chrono::system_clock::now();
     tp1.submit(tpQuickSort, &tobe_sorted, 0, tobe_sorted.size() - 1, &tp1);
     tp1.waitAll();
-
     auto end = std::chrono::system_clock::now();
     auto cost = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Sort time: " << cost.count() << std::endl;
@@ -63,7 +50,8 @@ int main() {
     std::cout << "Sort finish!" << std::endl;
 
     std::cout << "Checking answer......" << std::endl;
-    for(unsigned int i = 1; i < K * SIZE; i++) {
+    for(unsigned int i = 0; i < K * SIZE; i++) {
+        //if(i % SIZE == 0) continue;
         if(tobe_sorted[i] < tobe_sorted[i - 1]) {
             std::cout << "Sort failed at:" << i << std::endl;
             return 0;
@@ -103,7 +91,10 @@ void sortV(std::vector<int>& vector, int start) {
 }
 
 void tpQuickSort(std::vector<int>* vector, int start, int end, ThreadPool1* tp) {
-    if(start >= end) return;
+    if(end - start <= 100) {
+        std::sort(vector->begin() + start, vector->begin() + end + 1);
+        return;
+    }
 
     int pivot = (*vector)[start];
     int greater = end;
